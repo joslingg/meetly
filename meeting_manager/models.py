@@ -1,8 +1,11 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.forms import ValidationError
+from django.utils import timezone
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
-
+#Khoa/phòng
 class Department(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name='Tên Khoa / Phòng')
     description = models.TextField(blank=True, null=True, verbose_name='Mô tả')
@@ -21,14 +24,15 @@ class Department(models.Model):
         if self.meetings.exists():
             raise ValueError("Không thể xoá Khoa/Phòng này vì đã có cuộc họp được tổ chức.")
         super().delete(**args, **kwargs)
-
+ #Tổ chức
 class Organization(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name='Tên Tổ chức')
     description = models.TextField("Mô tả", blank=True, null=True)
     
     def __str__(self):
         return self.name
-    
+
+#Người dùng có thể có nhiều Ban/ngành khác    
 class UserAffiliation(models.Model):
     user = models.ForeignKey(
         User,
@@ -73,7 +77,16 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Hồ sơ của {self.user.get_full_name()}"
-    
+ # Tạo user profile khi tạo mới user
+@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        UserProfile.objects.create(user=instance)
+    else:
+        if hasattr(instance, 'profile'):
+            instance.profile.save()
+
+# Thành phần tham dự cuộc họp
 class MeetingParticipant(models.Model):
     PARTICIPANT_TYPE = [
         ('individual','Cá nhân'),
@@ -150,14 +163,16 @@ class MeetingParticipant(models.Model):
     def send_notification_via_zalo(self):
         pass
     
-    
+#Cuộc họp
 class Meeting(models.Model):
-    status_choices = [
+    STATUS_CHOICES = [
         ('Đã lên lịch', 'Đã lên lịch'),
         ('Đang diễn ra', 'Đang diễn ra'),
         ('Đã kết thúc', 'Đã kết thúc'),
         ('Bị hủy', 'Bị hủy'),
     ]
+    
+    meeting_number = models.CharField(max_length=50, unique=True, null=True, verbose_name='Số cuộc họp')
     
     title = models.CharField("Nội dung", max_length=255)
     date = models.DateField("Ngày họp")
@@ -195,7 +210,7 @@ class Meeting(models.Model):
     location = models.CharField("Địa điểm", max_length=255, blank=True, null=True)
     status = models.CharField(
         max_length=20,
-        choices=status_choices,
+        choices=STATUS_CHOICES,
         default='Đã lên lịch',
         verbose_name='Trạng thái'
     )
@@ -205,5 +220,103 @@ class Meeting(models.Model):
         verbose_name = 'Cuộc họp'
         verbose_name_plural = 'Cuộc họp'
     
+    def save(self, *args, **kwargs):
+        if not self.meeting_number:
+            current_year = timezone.now().year
+            last_meeting = Meeting.objects.filter(meeting_number__startswith=f"HOP-{current_year}-").order_by('-meeting_number').first()
+            
+            if last_meeting:
+                last_number = int(last_meeting.meeting_number.split('-')[-1])
+                new_number = last_number + 1
+            else:
+                new_number = 1
+            
+            self.meeting_number = f"HOP-{current_year}-{new_number:04d}"
+        super().save(*args, **kwargs)
+        
     def __str__(self):
-        return f"{self.title} - {self.date} {self.time if self.time else ''}"
+        return f"{self.meeting_number} - {self.title} - {self.date} {self.time if self.time else ''}"
+
+# Tệp đính kèm   
+class MeetingFile(models.Model):
+    meeting = models.ForeignKey(
+        Meeting,
+        on_delete=models.CASCADE,
+        related_name='files',
+        verbose_name='Cuộc họp'
+    )
+    file = models.FileField(upload_to='meeting_files/', verbose_name='Tập tin')
+    name = models.CharField(max_length=255, verbose_name='Tên file')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='uploaded_files',
+        verbose_name='Người tải lên'
+    )
+    
+    class Meta:
+        verbose_name = 'Tệp đính kèm'
+        verbose_name_plural = 'Tệp đính kèm'
+    
+    def __str__(self):
+        return f"{self.name}"
+
+# Biên bản cuộc họp
+class MeetingMinutes(models.Model):
+    meeting = models.OneToOneField(
+        Meeting,
+        on_delete=models.CASCADE,
+        related_name='minutes',
+        verbose_name='Cuộc họp'
+    )
+    content = models.TextField("Nội dung biên bản")
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='created_minutes',
+        verbose_name='Thư ký'
+    )
+    
+    class Meta:
+        verbose_name = 'Biên bản cuộc họp'
+        verbose_name_plural = 'Biên bản cuộc họp'
+    
+    def __str__(self):
+        return f"Biên bản {self.meeting.meeting_number} - {self.meeting.title}"
+
+#Thông báo  
+class Notification(models.Model):
+    TYPES_CHOICES = [
+        ('meeting_created','Cuộc hợp mới'),
+        ('meeting_updated','Cập nhật cuộc họp'),
+        ('meeting_reminder','Nhắc nhở cuộc họp'),
+    ]
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name='Người nhận'
+    )
+    meeting = models.ForeignKey(
+        Meeting,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name='Cuộc họp'
+    )
+    type = models.CharField(
+        max_length=40,
+        choices=TYPES_CHOICES
+    )
+    message = models.TextField("Nội dung thông báo")
+    sent_at = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField("Đã đọc",default=False)
+    
+    class Meta:
+        ordering = ['-sent_at']
+        verbose_name = 'Thông báo'
+        verbose_name_plural = 'Thông báo'
+    
+    def __str__(self):
+        return f"Thông báo cho {self.meeting.meeting_number} - {self.message[:50]}"

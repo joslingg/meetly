@@ -1,14 +1,17 @@
 from django import forms
-from .models import Department, Organization, Meeting, MeetingParticipant, UserAffiliation
+from .models import Department, Organization, Meeting, MeetingParticipant, MeetingFile, UserAffiliation
 from django.contrib.auth.models import User
 from datetime import date as dt_date, time as dt_time
 
+#Form cho ngày
 class DateInput(forms.DateInput):
     input_type = 'date'
-    
+
+#Form cho giờ    
 class TimeInput(forms.TimeInput):
     input_type = 'time'
-    
+
+#Form cho Khoa/Phòng
 class DepartmentForm(forms.ModelForm):
     class Meta:
         model = Department
@@ -22,7 +25,8 @@ class DepartmentForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.widget.attrs.update({'class': 'form-control'})
-            
+
+#Form cho tổ chức Organization            
 class OrganizationForm(forms.ModelForm):
     class Meta:
         model = Organization
@@ -36,11 +40,13 @@ class OrganizationForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
             field.widget.attrs.update({'class': 'form-control'})
-            
+    
+#Form cho Meeting        
 class MeetingForm(forms.ModelForm):
     class Meta:
         model = Meeting
         fields = [
+            'meeting_number',
             'title',
             'date',
             'time',
@@ -50,6 +56,7 @@ class MeetingForm(forms.ModelForm):
             'status'
         ]
         widgets = {
+            'meeting_number': forms.TextInput(attrs={'class':'form-control','readonly':'readonly','placeholder': 'Số cuộc họp'}),
             'title': forms.TextInput(attrs={'class': 'form-control','placeholder': 'Nhập tiêu đề cuộc họp'}),
             'date': DateInput(attrs={'class': 'form-control','placeholder': 'Chọn ngày'}),
             'time': TimeInput(attrs={'class': 'form-control','placeholder': 'Chọn giờ'}),
@@ -65,6 +72,7 @@ class MeetingForm(forms.ModelForm):
         self.fields['preparation'].queryset = User.objects.all()
         self.fields['host'].queryset = User.objects.all()
         # Thêm các label tiếng việt
+        self.fields['meeting_number'].label = 'Số cuộc họp'
         self.fields['title'].label = 'Nội dung'
         self.fields['date'].label = 'Ngày họp'
         self.fields['time'].label = 'Thời gian'
@@ -99,6 +107,7 @@ class MeetingForm(forms.ModelForm):
 
         return cleaned_data
 
+#Form cho MeetingParticipant
 class MeetingParticipantForm(forms.ModelForm):
     class Meta:
         model = MeetingParticipant
@@ -135,7 +144,8 @@ class MeetingParticipantForm(forms.ModelForm):
         self.fields['organization'].label = 'Ban/Ngành tham dự'
         self.fields['is_required'].label = 'Bắt buộc tham dự'
 
-MeetingParticipantFormSet = forms.modelformset_factory(
+#Formset cho MeetingParticipant
+MeetingParticipantFormSet = forms.inlineformset_factory(
     Meeting, #Model cha
     MeetingParticipant, #Model con
     form = MeetingParticipantForm, #Form con
@@ -173,3 +183,50 @@ class MeetingWithParticipantsForm(forms.ModelForm):
             self.participant_formset.instance = instance
             self.participant_formset.save()
         return instance
+
+#Form lọc cuộc họp
+class MeetingFilterForm(forms.Form):
+    title = forms.CharField(
+        label='Tiêu đề',
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Nhập tiêu đề cuộc họp'})
+    )
+    date_from = forms.DateField(
+        label='Từ ngày',
+        required=False,
+        widget=DateInput(attrs={'class': 'form-control', 'placeholder': 'Chọn ngày bắt đầu'})
+    )
+    date_to = forms.DateField(
+        label='Đến ngày',
+        required=False,
+        widget=DateInput(attrs={'class': 'form-control', 'placeholder': 'Chọn ngày kết thúc'})
+    )
+    status = forms.ChoiceField(
+        label='Trạng thái',
+        choices=[('', 'Tất cả')] + Meeting.STATUS_CHOICES,
+        required=False,
+        widget=forms.Select(attrs={'class': 'form-control'})
+    )
+    search = forms.CharField(
+        label='Tìm kiếm',
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Tìm kiếm theo số, tiêu đề hoặc người chủ trì'})
+    )
+
+#Form cho File đính kèm cuộc họp 
+class MeetingFileForm(forms.ModelForm):
+    class Meta:
+        model = MeetingFile
+        fields = ['file']
+        widgets = {
+            'file': forms.ClearableFileInput(attrs={'class': 'form-control-file'}),
+        }
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['file'].label = 'Tệp đính kèm'
+        
+
+        
+        
